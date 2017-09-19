@@ -152,7 +152,7 @@ find_system_commands() {
 #
 compression_type() {
   if [[ -z "${compression+x}" ]]; then
-    echo gzip
+    echo xz
   else
     echo "$compression"
   fi
@@ -247,8 +247,8 @@ requires_list() {
 # parse the CLI flags and options
 parse_options() {
   opts="$(getopt \
-    --longoptions help,version,archive:,compression:,conflicts:,debname:,dist_tag:,group:,obsoletes:,post:,postun:,pre:,preun:,priority:,provides:,requires:,testname: \
-    --name "$program" --options h,V -- "$@" \
+    --longoptions help,archive:,compression:,conflicts:,debname:,dist_tag:,group:,obsoletes:,post:,postun:,pre:,preun:,priority:,provides:,requires:,testname: \
+    --name "$program" --options h -- "$@" \
   )"
   eval set -- "$opts"
 
@@ -258,15 +258,11 @@ parse_options() {
         print_help
         exit
         ;;
-      -V | --version)
-        echo "$program $version"
-        exit
-        ;;
       --archive)
         archive=$2
         shift 2
         ;;
-     --compression)
+      --compression)
         compression=$2
         shift 2
         ;;
@@ -281,7 +277,7 @@ parse_options() {
       --dist_tag)
         dist_tag=$2
         shift 2
-	;;
+        ;;
       --group)
         group=$2
         shift 2
@@ -430,7 +426,7 @@ generate_filelist() {
   # sed -e 's/\/tmp\/test-hab-pkg-rpm-pkg_provides_configs\/BUILD//' links > linklist
 
   # printf "Generating list of filesystem directories to mark\n"
-  comm -12 /src/sorted_filesystem_list "$staging/tmp/hab_dirlist" > "$staging/tmp/filesystem_directories_to_mark"
+  comm -12 "$(dirname "$0")/../var/lib/sorted_filesystem_list" "$staging/tmp/hab_dirlist" > "$staging/tmp/filesystem_directories_to_mark"
 
   # This will hang on OS X because the syntax is different.
   # for dirname in `cat "$staging/tmp/filesystem_directories_to_mark"`; do
@@ -457,7 +453,7 @@ generate_filelist() {
   while read -r filename
   do
     sed -i '\#'"^$filename$"'#d' "$staging/tmp/filelist"
-  done < /src/tests/inputs/export/rpm/configs
+  done < /src/hab-pkg-rpm/tests/inputs/export/rpm/configs
 }
 
 maintainer() {
@@ -554,7 +550,16 @@ render_md5sums() {
 
 # The platform architecture.
 architecture() {
-  rpm --eval "%{_arch}"
+  # Memoize architecture value.
+  RPM_ARCH="${RPM_ARCH:=$(rpm --eval "%{_arch}")}"
+  echo "${RPM_ARCH}"
+}
+
+copy_artifacts() {
+  local results_path
+  results_path="./results"
+
+  cp "$staging/RPMS/$(architecture)/"*.rpm "${results_path}"
 }
 
 build_rpm() {
@@ -568,37 +573,33 @@ build_rpm() {
   # Stage the files to be included in the exported .deb package.
   if [[ ! -z "${testname+x}" ]]; then
     staging="/tmp/test-${program}-${testname}"
-    mkdir "$staging"
+    mkdir -p "$staging"
   else
     staging="$($_mktemp_cmd -t -d "${program}-staging-XXXX")"
   fi
 
   # Magic RPM directories
-  mkdir "$staging/BUILD"
-  mkdir "$staging/RPMS"
-  mkdir "$staging/SRPMS"
-  mkdir "$staging/SOURCES"
-  mkdir "$staging/SPECS"
-  mkdir "$staging/BUILD/hab"
-  mkdir "$staging/tmp"
+  mkdir -p "$staging/BUILD"
+  mkdir -p "$staging/RPMS"
+  mkdir -p "$staging/SRPMS"
+  mkdir -p "$staging/SOURCES"
+  mkdir -p "$staging/SPECS"
+  mkdir -p "$staging/BUILD/hab"
+  mkdir -p "$staging/tmp"
 
-  # Read the manifest to extract variables from it
-  manifest="$(cat "$install_dir/MANIFEST")"
+  manifest="$install_dir/MANIFEST"
 
-  pkg_license="$(grep __License__: <<< "$manifest" | cut -d ":" -f2 | sed 's/^ *//g')"
-  pkg_upstream_url="$(grep '__Upstream URL__' <<< "$manifest" | cut -d ":" -f2- | cut -d '(' -f1 | sed 's/[][]//g' | sed 's/^[\t ]*//g')"
-   # WIP
-   # if [[ "$pkg_upstream_url" == "upstream project\'s website or home page is not defined" ]] ; then
-   #
-   # fi
-
-  # Get the ident and the origin and release from that
-  ident="$(cat "$install_dir/IDENT")"
-
-  pkg_origin="$(echo "$ident" | cut -f1 -d/)"
-  pkg_name="$(echo "$ident" | cut -f2 -d/)"
-  pkg_version="$(echo "$ident" | cut -f3 -d/)"
-  pkg_release="$(echo "$ident" | cut -f4 -d/)"
+  # Set the pkg variables
+  pkg_origin="$(echo "${install_dir}" | cut -f4 -d/)"
+  pkg_name="$(echo "${install_dir}" | cut -f5 -d/)"
+  pkg_version="$(echo "${install_dir}" | cut -f6 -d/)"
+  pkg_release="$(echo "${install_dir}" | cut -f7 -d/)"
+  # Parsing from the manifest is the safest way to fetch these values since
+  # the right-hand assignment of variables can contain other shell variables.
+  pkg_license="$(awk -F '[()]' '/__Upstream URL__/ && !/not defined$/ {print $(NF-1)}' "${manifest}")"
+  # Parse URL from manifest. Intentionally set the value to an empty string
+  # when the value is undefined in the plan.
+  pkg_upstream_url="$(awk -F '[()]' '/__Upstream URL__/ && !/not defined$/ {print $(NF-1)}' "${manifest}")"
 
   convert_name
   convert_version
@@ -614,19 +615,19 @@ build_rpm() {
 
   # For most testing, it is enough to generate the spec file and RPM name without building the full package.
   if [[ -z "${testname+x}" ]]; then
-    install_options=(--target "$(architecture)" -bb --buildroot "$staging/BUILD" --define \'_topdir "$staging"\' "$staging/SPECS/$safe_name.spec")
+    install_options=(--target "$(architecture)" -bb --buildroot "$staging/BUILD" --define "_topdir $staging" "$staging/SPECS/$safe_name.spec")
+    if [[ -n "${DEBUG+x}" ]]; then
+      install_options+=('--verbose')
+    fi
     rpmbuild "${install_options[@]}"
-    cp "$staging/RPMS/$(architecture)/*.rpm" .
+    copy_artifacts
   else
     printf "%s" "$(rpmfile)" > "$staging/rpm_name"
   fi
 }
 
-# The current version of Habitat this program
-version='@version@'
-
 # The author of this program
-author='@author@'
+author='The Habitat Maintainers <humans@habitat.sh>'
 
 # The short version of the program name which is used in logging output
 program=$(basename "$0")

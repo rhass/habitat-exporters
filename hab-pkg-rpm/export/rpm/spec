@@ -8,23 +8,25 @@
 %define __spec_clean_post true
 %define __spec_clean_pre true
 
-# Use md5
-%define _binary_filedigest_algorithm 1
+# Use SHA256
+%define _binary_filedigest_algorithm SHA256
 
 %define _binary_payload {{compression}}
 
 # Metadata
-Name: {{name}} 
+Name: {{name}}
 Version: {{version}}
 Release: {{release}}
-Summary: {{summary}} 
+Summary: {{summary}}
 AutoReqProv: no
 BuildRoot: %buildroot
 Prefix: /
 Group: {{group}}
 License: {{license}}
 Vendor: {{vendor}}
-URL: {{url}} 
+{{#if url~}}
+URL: {{url}}
+{{/if~}}
 Packager: {{{packager}}}
 {{#if requires~}}
 {{requires}}

@@ -1,14 +1,18 @@
-#!/bin/bash
+# This script assumes it is being sourced in during the `do_after` plan-build
+# lifecycle and executed within a subshell to prevent mutating upstream
+# functions and variables.
 
-build_dir="$1"
-test_dir="$2/tests"
+build_dir="${build_dir:-"${pkg_prefix}"}"
+test_dir="${test_dir:-"${SRC_PATH}/tests"}"
 
 set -eu
 
-hab pkg install core/busybox
-busybox_pkg_dir=$(hab pkg path core/busybox)
-hab pkg install core/netcat
-netcat_pkg_dir=$(hab pkg path core/netcat)
+# These packages are installed as pkg_build_deps.
+busybox_pkg_dir=$(pkg_path_for busybox)
+netcat_pkg_dir=$(pkg_path_for netcat)
+
+# Add RPM bin directory to PATH during test context to duplicate PATH behavior
+# when running from 
 
 echo 'Test setup noopts: build package with no option overrides'
 "$build_dir/bin/hab-pkg-rpm" --testname noopts core/busybox
