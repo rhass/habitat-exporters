@@ -38,8 +38,9 @@ preun=
 debname=
 safe_name=
 safe_version=
-priority=
 group=
+gpg_path="${HOME}/.gnupg"
+
 
 # defaults for the application
 : ${pkg:="unknown"}
@@ -60,30 +61,30 @@ fi
 print_help() {
   printf -- "%s %s
 %s
-Habitat Package Debian - Create a Debian package from a set of Habitat packages
+Habitat Package RPM - Create a RPM package from a set of Habitat packages
 USAGE:
   %s [FLAGS] <PKG_IDENT>
 FLAGS:
     --help           Prints help information
 OPTIONS:
-    --archive=FILE      Filename of exported RPM package. Should end in .rpm
-    --compression=TYPE  Compression type for RPM; gzip (default), bzip2, or xz
-    --conflicts=PKG     Comma-separated list of packages with which the exported RPM conflicts
-    --debname=NAME      Name of Debian package to be built
-    --dist_tag=DIST_TAG Distribution name for use in RPM filename
-    --group=RPMGROUP    Group to be assigned to the RPM package
-    --obsoletes=PKG     Comma-separated list of packages made obsolete by the exported RPM
-    --postinst=FILE     File name of script called after installation
-    --postrm=FILE       File name of script called after removal
-    --preinst=FILE      File name of script called before installation
-    --prerm=FILE        File name of script called before removal
-    --provides=PKG      Comma-separated list of facilities provided by the exported RPM
-    --requires=PKG      Comma-separated list of packages required by the exported RPM
-    --priority=PRIORITY Priority to be assigned to the Debian package
-    --testname=TESTNAME Test name used to create a staging directory for examination
+    --archive=FILE        Filename of exported RPM package. Should end in .rpm
+    --compression=TYPE    Compression type for RPM; gzip (default), bzip2, or xz
+    --conflicts=PKG       Comma-separated list of packages with which the exported RPM conflicts
+    --dist_tag=DIST_TAG   Distribution name for use in RPM filename
+    --gnupg_path=PATH     Full path to .gnupg directory
+    --gnupg_keyname=NAME  Name associated with GPG key to use in signing RPM files.
+    --group=RPMGROUP      Group to be assigned to the RPM package
+    --obsoletes=PKG       Comma-separated list of packages made obsolete by the exported RPM
+    --postinst=FILE       File name of script called after installation
+    --postrm=FILE         File name of script called after removal
+    --preinst=FILE        File name of script called before installation
+    --prerm=FILE          File name of script called before removal
+    --provides=PKG        Comma-separated list of facilities provided by the exported RPM
+    --requires=PKG        Comma-separated list of packages required by the exported RPM
+    --testname=TESTNAME   Test name used to create a staging directory for examination
 ARGS:
     <PKG_IDENT>      Habitat package identifier (ex: acme/redis)
-" "$program" "$version" "$author" "$program"
+" "$program" "$author" "$program"
 }
 
 # internal** Exit the program with an error message and a status code.
@@ -205,19 +206,6 @@ obsoletes_list() {
   fi
 }
 
-# The package priority.
-#
-# Can be one of required, important, standard, optional, or extra.
-# See https://www.debian.org/doc/manuals/debian-faq/ch-pkg_basics.en.html#s-priority
-#
-priority() {
-  if [[ ! -z "$priority" ]]; then
-    echo "$priority"
-  else
-    echo extra
-  fi
-}
-
 #
 # Parse comma-separated list of provided facilities
 #
@@ -247,7 +235,7 @@ requires_list() {
 # parse the CLI flags and options
 parse_options() {
   opts="$(getopt \
-    --longoptions help,archive:,compression:,conflicts:,debname:,dist_tag:,group:,obsoletes:,post:,postun:,pre:,preun:,priority:,provides:,requires:,testname: \
+    --longoptions help,archive:,compression:,conflicts:,dist_tag:,gnupg_keyname:,gnupg_path:,group:,obsoletes:,post:,postun:,pre:,preun:,provides:,requires:,testname: \
     --name "$program" --options h -- "$@" \
   )"
   eval set -- "$opts"
@@ -270,12 +258,16 @@ parse_options() {
         conflicts=$2
         shift 2
         ;;
-      --debname)
-        debname=$2
-        shift 2
-        ;;
       --dist_tag)
         dist_tag=$2
+        shift 2
+        ;;
+      --gnupg_keyname)
+        gpg_keyname=$2
+        shift 2
+        ;;
+      --gnupg_path)
+        gpg_path=$2
         shift 2
         ;;
       --group)
@@ -300,10 +292,6 @@ parse_options() {
         ;;
       --preun)
         preun=$2;
-        shift 2
-        ;;
-      --priority)
-        priority=$2
         shift 2
         ;;
       --provides)
@@ -496,7 +484,6 @@ render_spec_file() {
     --packager "$(maintainer)" \
     --architecture "$(architecture)" \
     --installed_size "$(installed_size)" \
-    --priority "$(priority)" \
     --pkg_upstream_url "$pkg_upstream_url" \
     --conflicts "$(conflicts_list)" \
     --requires "$(requires_list)" \
@@ -618,6 +605,16 @@ build_rpm() {
     install_options=(--target "$(architecture)" -bb --buildroot "$staging/BUILD" --define "_topdir $staging" "$staging/SPECS/$safe_name.spec")
     if [[ -n "${DEBUG+x}" ]]; then
       install_options+=('--verbose')
+    fi
+
+    if [[ -n "${gpg_keyname}" ]]; then
+      install_options+=('--sign')
+
+      cat >"${HOME}/.rpmmacros" <<EOF
+%_signature gpg
+%_gpg_path ${gpg_path}
+%_gpg_name "${gpg_keyname}"
+EOF
     fi
     rpmbuild "${install_options[@]}"
     copy_artifacts
